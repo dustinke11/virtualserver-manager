@@ -9,13 +9,13 @@ metadata:
     app.kubernetes.io/created-by: virtualserver-manager
     app.kubernetes.io/part-of: virtualserver-manager
     app.kubernetes.io/managed-by: kustomize
-  name: system
+  name: default
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: controller-manager
-  namespace: system
+  namespace: default
   labels:
     control-plane: controller-manager
     app.kubernetes.io/name: deployment
