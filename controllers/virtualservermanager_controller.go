@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -171,6 +172,9 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 		if err := r.createOrUpdateDeployment(ctx, upstream, manager.Spec); err != nil {
 			return ctrl.Result{}, err
 		}
+		if err := r.createOrUpdateService(ctx, upstream, manager.Spec.Namespace); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// 更新 Status
@@ -239,6 +243,49 @@ func (r *VirtualServerManagerReconciler) createOrUpdateDeployment(ctx context.Co
 		// 如果已存在则更新
 		if err := r.Update(ctx, deployment); err != nil {
 			log.Error(err, "unable to update Deployment")
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *VirtualServerManagerReconciler) createOrUpdateService(ctx context.Context, upstream nginxv1.Upstream, namespace string) error {
+	log := log.FromContext(ctx)
+
+	// 创建Service对象
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      upstream.Name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"app": upstream.Name,
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{
+				"app": upstream.Name,
+			},
+			Ports: []corev1.ServicePort{
+				{
+					Protocol:   corev1.ProtocolTCP,
+					Port:       int32(upstream.Port),
+					TargetPort: intstr.FromInt(upstream.Port),
+				},
+			},
+			Type: corev1.ServiceTypeClusterIP,
+		},
+	}
+
+	// 创建或更新Service
+	if err := r.Create(ctx, service); err != nil {
+		if !k8serrors.IsAlreadyExists(err) {
+			log.Error(err, "unable to create Service")
+			return err
+		}
+		// 如果已存在则更新
+		if err := r.Update(ctx, service); err != nil {
+			log.Error(err, "unable to update Service")
 			return err
 		}
 	}
