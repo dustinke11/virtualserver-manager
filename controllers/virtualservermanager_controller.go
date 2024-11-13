@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	nginxv1 "virtualservermanager/api/v1"
+	nginxv1 "virtualserver-manager/api/v1"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -159,7 +159,8 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
-	var cpuUsageEachNode map[string]float64
+	// 初始化CPU使用率map
+	cpuUsageEachNode := make(map[string]float64)
 
 	for _, upstream := range manager.Spec.Upstreams {
 		// 获取节点CPU使用率
@@ -169,10 +170,11 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 			return ctrl.Result{}, err
 		}
 
-		// 计算CPU使用率百分比
-		cpuUsage := float64(nodeMetrics.Usage.Cpu().MilliValue()) / 10.0 // 转换为百分比
+		// CPU使用率以纳核(n)为单位
+		cpuQuantity := nodeMetrics.Usage.Cpu()
+		// 转换为百分比 (1000m = 1 core = 100%)
+		cpuUsage := float64(cpuQuantity.MilliValue()) / 10.0
 		cpuUsageEachNode[upstream.NodeName] = cpuUsage
-
 	}
 
 	// 计算所有节点CPU使用率总和

@@ -31,8 +31,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	nginxv1 "virtualservermanager/api/v1"
-	"virtualservermanager/controllers"
+	nginxv1 "virtualserver-manager/api/v1"
+	"virtualserver-manager/controllers"
 	//+kubebuilder:scaffold:imports
 )
 
