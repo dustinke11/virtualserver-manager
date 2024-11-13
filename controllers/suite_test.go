@@ -30,7 +30,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	nginxv1 "virtualservermanager/api/v1"
+	nginxv1 "virtualserver-manager/api/v1"
 	//+kubebuilder:scaffold:imports
 )
 
