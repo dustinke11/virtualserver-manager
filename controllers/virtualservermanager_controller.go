@@ -84,61 +84,6 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
-	// 更新 VirtualServer 变量
-	_, found, err := unstructured.NestedMap(vs.Object, "spec")
-	if err != nil || !found {
-		log.Error(err, "unable to get VirtualServer spec")
-		return ctrl.Result{}, err
-	}
-
-	// 构建 upstreams
-	upstreams := make([]interface{}, 0)
-	for _, upstream := range manager.Spec.Upstreams {
-		upstreamMap := map[string]interface{}{
-			"name":    upstream.Name,
-			"service": upstream.Service,
-			"port":    int64(upstream.Port),
-		}
-		upstreams = append(upstreams, upstreamMap)
-	}
-
-	// 构建 splits
-	splits := make([]interface{}, 0)
-	for _, upstream := range manager.Spec.Upstreams {
-		splitMap := map[string]interface{}{
-			"weight": int64(upstream.Weight),
-			"action": map[string]interface{}{
-				"pass": upstream.Name,
-			},
-		}
-		splits = append(splits, splitMap)
-	}
-
-	// 构建 routes
-	routes := []interface{}{
-		map[string]interface{}{
-			"path":   "/",
-			"splits": splits,
-		},
-	}
-
-	// 更新 spec
-	if err := unstructured.SetNestedSlice(vs.Object, upstreams, "spec", "upstreams"); err != nil {
-		log.Error(err, "unable to set upstreams")
-		return ctrl.Result{}, err
-	}
-
-	if err := unstructured.SetNestedSlice(vs.Object, routes, "spec", "routes"); err != nil {
-		log.Error(err, "unable to set routes")
-		return ctrl.Result{}, err
-	}
-
-	// 更新 VirtualServer 资源
-	if err := r.Update(ctx, &vs); err != nil {
-		log.Error(err, "unable to update VirtualServer")
-		return ctrl.Result{}, err
-	}
-
 	// 为每个upstream创建对应的Deployment
 	for _, upstream := range manager.Spec.Upstreams {
 		if err := r.createOrUpdateDeployment(ctx, upstream, manager.Spec); err != nil {
@@ -234,9 +179,58 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 
 		log.Info("更新节点权重", "节点", upstream.NodeName, "新权重", newWeight)
 	}
+	// 更新 VirtualServer 变量
+	_, found, err := unstructured.NestedMap(vs.Object, "spec")
+	if err != nil || !found {
+		log.Error(err, "unable to get VirtualServer spec")
+		return ctrl.Result{}, err
+	}
 
+	// 构建 upstreams
+	upstreams := make([]interface{}, 0)
+	for _, upstream := range manager.Spec.Upstreams {
+		upstreamMap := map[string]interface{}{
+			"name":    upstream.Name,
+			"service": upstream.Service,
+			"port":    int64(upstream.Port),
+		}
+		upstreams = append(upstreams, upstreamMap)
+	}
+
+	// 构建 splits
+	splits := make([]interface{}, 0)
+	for _, upstream := range manager.Spec.Upstreams {
+		splitMap := map[string]interface{}{
+			"weight": int64(upstream.Weight),
+			"action": map[string]interface{}{
+				"pass": upstream.Name,
+			},
+		}
+		splits = append(splits, splitMap)
+	}
+
+	// 构建 routes
+	routes := []interface{}{
+		map[string]interface{}{
+			"path":   "/",
+			"splits": splits,
+		},
+	}
+
+	// 更新 spec
+	if err := unstructured.SetNestedSlice(vs.Object, upstreams, "spec", "upstreams"); err != nil {
+		log.Error(err, "unable to set upstreams")
+		return ctrl.Result{}, err
+	}
+
+	if err := unstructured.SetNestedSlice(vs.Object, routes, "spec", "routes"); err != nil {
+		log.Error(err, "unable to set routes")
+		return ctrl.Result{}, err
+	}
+
+	// 更新 VirtualServer 资源
 	if err := r.Update(ctx, &vs); err != nil {
-		log.Error(err, "更新 VirtualServer 失败")
+		log.Error(err, "unable to update VirtualServer")
 		return ctrl.Result{}, err
 	}
 
