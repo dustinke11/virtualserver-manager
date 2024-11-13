@@ -231,7 +231,13 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 			newWeight = 10
 		}
 		manager.Spec.Upstreams[i].Weight = newWeight
+
 		log.Info("更新节点权重", "节点", upstream.NodeName, "新权重", newWeight)
+	}
+
+	if err := r.Update(ctx, &vs); err != nil {
+		log.Error(err, "更新 VirtualServer 失败")
+		return ctrl.Result{}, err
 	}
 
 	// 更新 Status
