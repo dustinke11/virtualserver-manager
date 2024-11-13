@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -34,6 +35,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	metricsclientset "k8s.io/metrics/pkg/client/clientset/versioned"
 	"k8s.io/utils/pointer"
 )
 
@@ -88,36 +90,6 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 		log.Error(err, "unable to get VirtualServer spec")
 		return ctrl.Result{}, err
 	}
-
-	// // 创建metrics客户端
-	// config, err := ctrl.GetConfig()
-	// if err != nil {
-	// 	return ctrl.Result{}, err
-	// }
-	// metricsClient, err := versioned.NewForConfig(config)
-	// if err != nil {
-	// 	return ctrl.Result{}, err
-	// }
-
-	// // 获取节点CPU使用率
-	// nodeMetrics, err := metricsClient.MetricsV1beta1().NodeMetricses().Get(ctx, manager.Spec.NodeName, metav1.GetOptions{})
-	// if err != nil {
-	// 	log.Error(err, "unable to get node metrics")
-	// 	return ctrl.Result{}, err
-	// }
-
-	// // 计算CPU使用率百分比
-	// cpuUsage := float64(nodeMetrics.Usage.Cpu().MilliValue()) / 10.0 // 转换为百分比
-
-	// // 根据CPU使用率动态调整weight
-	// for i := range manager.Spec.Upstreams {
-	// 	// 线性调整weight: 100 - cpuUsage
-	// 	newWeight := 100 - int(cpuUsage)
-	// 	if newWeight < 10 {
-	// 		newWeight = 10 // 设置最小值
-	// 	}
-	// 	manager.Spec.Upstreams[i].Weight = newWeight
-	// }
 
 	// 构建 upstreams
 	upstreams := make([]interface{}, 0)
@@ -177,6 +149,89 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 		}
 	}
 
+	// 创建metrics客户端
+	config, err := ctrl.GetConfig()
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	metricsClient, err := metricsclientset.NewForConfig(config)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	var cpuUsageEachNode map[string]float64
+
+	for _, upstream := range manager.Spec.Upstreams {
+		// 获取节点CPU使用率
+		nodeMetrics, err := metricsClient.MetricsV1beta1().NodeMetricses().Get(ctx, upstream.NodeName, metav1.GetOptions{})
+		if err != nil {
+			log.Error(err, "unable to get node metrics")
+			return ctrl.Result{}, err
+		}
+
+		// 计算CPU使用率百分比
+		cpuUsage := float64(nodeMetrics.Usage.Cpu().MilliValue()) / 10.0 // 转换为百分比
+		cpuUsageEachNode[upstream.NodeName] = cpuUsage
+
+	}
+
+	// 计算所有节点CPU使用率总和
+	totalCPUUsage := 0.0
+	for _, cpuUsage := range cpuUsageEachNode {
+		totalCPUUsage += cpuUsage
+	}
+
+	// 计算每个节点CPU使用率占比
+	cpuUsagePercentage := make(map[string]int)
+	remainingPercentage := 100
+	nodeCount := len(cpuUsageEachNode)
+
+	if totalCPUUsage > 0 {
+		// 先计算每个节点的初始百分比
+		for nodeName, cpuUsage := range cpuUsageEachNode {
+			if nodeCount == 1 {
+				// 如果是最后一个节点,分配剩余的百分比
+				cpuUsagePercentage[nodeName] = remainingPercentage
+			} else {
+				percentage := int((cpuUsage / totalCPUUsage) * 100)
+				if percentage > remainingPercentage {
+					percentage = remainingPercentage
+				}
+				cpuUsagePercentage[nodeName] = percentage
+				remainingPercentage -= percentage
+				nodeCount--
+			}
+		}
+	} else {
+		// 如果总和为0,则平均分配
+		equalShare := 100 / len(cpuUsageEachNode)
+		remaining := 100 % len(cpuUsageEachNode)
+		for nodeName := range cpuUsageEachNode {
+			cpuUsagePercentage[nodeName] = equalShare
+			if remaining > 0 {
+				cpuUsagePercentage[nodeName]++
+				remaining--
+			}
+		}
+	}
+
+	for nodeName, percentage := range cpuUsagePercentage {
+		log.Info("节点CPU使用率占比", "节点", nodeName, "占比", percentage)
+	}
+	// 根据CPU使用率占比计算weight
+	for i, upstream := range manager.Spec.Upstreams {
+		// 获取该节点的CPU使用率占比
+		percentage := cpuUsagePercentage[upstream.NodeName]
+		// weight设置为100减去CPU使用率占比,这样CPU负载越高,weight越小
+		newWeight := 100 - percentage
+		// 设置最小weight为10,避免流量完全切走
+		if newWeight < 10 {
+			newWeight = 10
+		}
+		manager.Spec.Upstreams[i].Weight = newWeight
+		log.Info("更新节点权重", "节点", upstream.NodeName, "新权重", newWeight)
+	}
+
 	// 更新 Status
 	manager.Status.Updated = true
 	if err := r.Status().Update(ctx, &manager); err != nil {
@@ -184,7 +239,7 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: time.Minute * 1}, nil
 }
 
 func (r *VirtualServerManagerReconciler) createOrUpdateDeployment(ctx context.Context, upstream nginxv1.Upstream, spec nginxv1.VirtualServerManagerSpec) error {
