@@ -35,10 +35,11 @@ type VirtualServerManagerSpec struct {
 }
 
 type Upstream struct {
-	Name    string `json:"name"`
-	Service string `json:"service"`
-	Port    int    `json:"port"`
-	Weight  int    `json:"weight"`
+	Name     string `json:"name"`
+	Service  string `json:"service"`
+	Port     int    `json:"port"`
+	Weight   int    `json:"weight"`
+	NodeName string `json:"nodeName"`
 }
 
 // VirtualServerManagerStatus defines the observed state of VirtualServerManager

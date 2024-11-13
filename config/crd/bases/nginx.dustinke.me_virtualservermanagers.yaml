@@ -56,6 +56,8 @@ spec:
                   properties:
                     name:
                       type: string
+                    nodeName:
+                      type: string
                     port:
                       type: integer
                     service:
@@ -64,6 +66,7 @@ spec:
                       type: integer
                   required:
                   - name
+                  - nodeName
                   - port
                   - service
                   - weight
