@@ -165,20 +165,7 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 	for nodeName, percentage := range cpuUsagePercentage {
 		log.Info("节点CPU使用率占比", "节点", nodeName, "占比", percentage)
 	}
-	// 根据CPU使用率占比计算weight
-	for i, upstream := range manager.Spec.Upstreams {
-		// 获取该节点的CPU使用率占比
-		percentage := cpuUsagePercentage[upstream.NodeName]
-		// weight设置为100减去CPU使用率占比,这样CPU负载越高,weight越小
-		newWeight := 100 - percentage
-		// 设置最小weight为10,避免流量完全切走
-		if newWeight < 10 {
-			newWeight = 10
-		}
-		manager.Spec.Upstreams[i].Weight = newWeight
 
-		log.Info("更新节点权重", "节点", upstream.NodeName, "新权重", newWeight)
-	}
 	// 更新 VirtualServer 变量
 	_, found, err := unstructured.NestedMap(vs.Object, "spec")
 	if err != nil || !found {
@@ -200,12 +187,21 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 	// 构建 splits
 	splits := make([]interface{}, 0)
 	for _, upstream := range manager.Spec.Upstreams {
+		// 获取该节点的CPU使用率占比
+		percentage := cpuUsagePercentage[upstream.NodeName]
+		// weight设置为100减去CPU使用率占比,这样CPU负载越高,weight越小
+		newWeight := 100 - percentage
+		// 设置最小weight为10,避免流量完全切走
+		if newWeight < 10 {
+			newWeight = 10
+		}
 		splitMap := map[string]interface{}{
-			"weight": int64(upstream.Weight),
+			"weight": int64(newWeight),
 			"action": map[string]interface{}{
 				"pass": upstream.Name,
 			},
 		}
+		log.Info("更新节点权重", "节点", upstream.NodeName, "新权重", newWeight)
 		splits = append(splits, splitMap)
 	}
 
