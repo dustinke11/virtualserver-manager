@@ -184,17 +184,10 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 		upstreams = append(upstreams, upstreamMap)
 	}
 
-	// 构建 splits
 	splits := make([]interface{}, 0)
 	for _, upstream := range manager.Spec.Upstreams {
-		// 获取该节点的CPU使用率占比
 		percentage := cpuUsagePercentage[upstream.NodeName]
-		// weight设置为100减去CPU使用率占比,这样CPU负载越高,weight越小
 		newWeight := 100 - percentage
-		// 设置最小weight为10,避免流量完全切走
-		if newWeight < 10 {
-			newWeight = 10
-		}
 		splitMap := map[string]interface{}{
 			"weight": int64(newWeight),
 			"action": map[string]interface{}{
