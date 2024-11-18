@@ -61,14 +61,14 @@ type VirtualServerManagerReconciler struct {
 func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx).WithValues("virtualservermanager", req.NamespacedName)
 
-	// 获取 VirtualServerManager 实例
+	// Get VirtualServerManager instance
 	var manager nginxv1.VirtualServerManager
 	if err := r.Get(ctx, req.NamespacedName, &manager); err != nil {
 		log.Error(err, "unable to fetch VirtualServerManager")
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// 获取指定的 VirtualServer
+	// Get the specified VirtualServer
 	var vs unstructured.Unstructured
 	vs.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "k8s.nginx.org",
@@ -84,7 +84,7 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
-	// 为每个upstream创建对应的Deployment
+	// Create Deployment objects for each upstream
 	for _, upstream := range manager.Spec.Upstreams {
 		if err := r.createOrUpdateDeployment(ctx, upstream, manager.Spec); err != nil {
 			return ctrl.Result{}, err
@@ -94,7 +94,7 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 		}
 	}
 
-	// 创建metrics客户端
+	// Create metrics client
 	config, err := ctrl.GetConfig()
 	if err != nil {
 		return ctrl.Result{}, err
@@ -104,40 +104,38 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
-	// 初始化CPU使用率map
+	// Initialize CPU usage map
 	cpuUsageEachNode := make(map[string]float64)
 
 	for _, upstream := range manager.Spec.Upstreams {
-		// 获取节点CPU使用率
+		// Get node CPU usage
 		nodeMetrics, err := metricsClient.MetricsV1beta1().NodeMetricses().Get(ctx, upstream.NodeName, metav1.GetOptions{})
 		if err != nil {
 			log.Error(err, "unable to get node metrics")
 			return ctrl.Result{}, err
 		}
 
-		// CPU使用率以纳核(n)为单位
+		// CPU usage in nanocores (n)
 		cpuQuantity := nodeMetrics.Usage.Cpu()
-		// 转换为百分比 (1000m = 1 core = 100%)
+		// Convert to percentage (1000m = 1 core = 100%)
 		cpuUsage := float64(cpuQuantity.MilliValue()) / 10.0
 		cpuUsageEachNode[upstream.NodeName] = cpuUsage
 	}
 
-	// 计算所有节点CPU使用率总和
+	// Calculate total CPU usage
 	totalCPUUsage := 0.0
 	for _, cpuUsage := range cpuUsageEachNode {
 		totalCPUUsage += cpuUsage
 	}
 
-	// 计算每个节点CPU使用率占比
+	// Calculate CPU usage percentage for each node
 	cpuUsagePercentage := make(map[string]int)
 	remainingPercentage := 100
 	nodeCount := len(cpuUsageEachNode)
 
 	if totalCPUUsage > 0 {
-		// 先计算每个节点的初始百分比
 		for nodeName, cpuUsage := range cpuUsageEachNode {
 			if nodeCount == 1 {
-				// 如果是最后一个节点,分配剩余的百分比
 				cpuUsagePercentage[nodeName] = remainingPercentage
 			} else {
 				percentage := int((cpuUsage / totalCPUUsage) * 100)
@@ -150,7 +148,6 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 			}
 		}
 	} else {
-		// 如果总和为0,则平均分配
 		equalShare := 100 / len(cpuUsageEachNode)
 		remaining := 100 % len(cpuUsageEachNode)
 		for nodeName := range cpuUsageEachNode {
@@ -163,17 +160,17 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 	}
 
 	for nodeName, percentage := range cpuUsagePercentage {
-		log.Info("节点CPU使用率占比", "节点", nodeName, "占比", percentage)
+		log.Info("Node CPU usage percentage", "node", nodeName, "percentage", percentage)
 	}
 
-	// 更新 VirtualServer 变量
+	// Update VirtualServer variable
 	_, found, err := unstructured.NestedMap(vs.Object, "spec")
 	if err != nil || !found {
 		log.Error(err, "unable to get VirtualServer spec")
 		return ctrl.Result{}, err
 	}
 
-	// 构建 upstreams
+	// Build upstreams
 	upstreams := make([]interface{}, 0)
 	for _, upstream := range manager.Spec.Upstreams {
 		upstreamMap := map[string]interface{}{
@@ -194,11 +191,11 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 				"pass": upstream.Name,
 			},
 		}
-		log.Info("更新节点权重", "节点", upstream.NodeName, "新权重", newWeight)
+		log.Info("Update node weight", "node", upstream.NodeName, "new weight", newWeight)
 		splits = append(splits, splitMap)
 	}
 
-	// 构建 routes
+	// Build routes
 	routes := []interface{}{
 		map[string]interface{}{
 			"path":   "/",
@@ -206,7 +203,7 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 		},
 	}
 
-	// 更新 spec
+	// Update spec
 	if err := unstructured.SetNestedSlice(vs.Object, upstreams, "spec", "upstreams"); err != nil {
 		log.Error(err, "unable to set upstreams")
 		return ctrl.Result{}, err
@@ -217,13 +214,13 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 		return ctrl.Result{}, err
 	}
 
-	// 更新 VirtualServer 资源
+	// Update VirtualServer resource
 	if err := r.Update(ctx, &vs); err != nil {
 		log.Error(err, "unable to update VirtualServer")
 		return ctrl.Result{}, err
 	}
 
-	// 更新 Status
+	// Update Status
 	manager.Status.Updated = true
 	if err := r.Status().Update(ctx, &manager); err != nil {
 		log.Error(err, "unable to update VirtualServerManager status")
@@ -236,7 +233,7 @@ func (r *VirtualServerManagerReconciler) Reconcile(ctx context.Context, req ctrl
 func (r *VirtualServerManagerReconciler) createOrUpdateDeployment(ctx context.Context, upstream nginxv1.Upstream, spec nginxv1.VirtualServerManagerSpec) error {
 	log := log.FromContext(ctx)
 
-	// 创建Deployment对象
+	// Create Deployment object
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      upstream.Name,
@@ -256,7 +253,7 @@ func (r *VirtualServerManagerReconciler) createOrUpdateDeployment(ctx context.Co
 					},
 				},
 				Spec: corev1.PodSpec{
-					NodeName: upstream.NodeName, // 指定节点
+					NodeName: upstream.NodeName, // Specify node
 					Containers: []corev1.Container{
 						{
 							Name:            "web-container",
@@ -280,13 +277,13 @@ func (r *VirtualServerManagerReconciler) createOrUpdateDeployment(ctx context.Co
 		},
 	}
 
-	// 创建或更新Deployment
+	// Create or update Deployment
 	if err := r.Create(ctx, deployment); err != nil {
 		if !k8serrors.IsAlreadyExists(err) {
 			log.Error(err, "unable to create Deployment")
 			return err
 		}
-		// 如果已存在则更新
+		// If it already exists, update it
 		if err := r.Update(ctx, deployment); err != nil {
 			log.Error(err, "unable to update Deployment")
 			return err
@@ -299,7 +296,7 @@ func (r *VirtualServerManagerReconciler) createOrUpdateDeployment(ctx context.Co
 func (r *VirtualServerManagerReconciler) createOrUpdateService(ctx context.Context, upstream nginxv1.Upstream, namespace string) error {
 	log := log.FromContext(ctx)
 
-	// 创建Service对象
+	// Create Service object
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      upstream.Name,
@@ -323,13 +320,13 @@ func (r *VirtualServerManagerReconciler) createOrUpdateService(ctx context.Conte
 		},
 	}
 
-	// 创建或更新Service
+	// Create or update Service
 	if err := r.Create(ctx, service); err != nil {
 		if !k8serrors.IsAlreadyExists(err) {
 			log.Error(err, "unable to create Service")
 			return err
 		}
-		// 如果已存在则更新
+		// If it already exists, update it
 		if err := r.Update(ctx, service); err != nil {
 			log.Error(err, "unable to update Service")
 			return err
